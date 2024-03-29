@@ -5,21 +5,30 @@ from pydantic import BaseModel, Field
 from typing import Coroutine, Optional, List
 from jwt_manager import create_token, validate_token
 from fastapi.security import HTTPBearer
+from config.database import Session, engine, Base
+from models.movie import Movie as MovieModel
+from fastapi.encoders import jsonable_encoder
+
 
 app = FastAPI()
 app.title = "My App with FasAPI"
 app.version = "0.0.1"
 
+Base.metadata.create_all(bind=engine)
+
+
 class JWTBearer(HTTPBearer):
-   async def __call__(self, request: Request):
-        auth= await super().__call__(request)
-        data =validate_token(auth.credentials)
-        if (data['email'])!='admin@gmail.com':
+    async def __call__(self, request: Request):
+        auth = await super().__call__(request)
+        data = validate_token(auth.credentials)
+        if (data["email"]) != "admin@gmail.com":
             raise HTTPException(status_code=403, details="Credenciales son invalidas")
 
+
 class User(BaseModel):
-    email:str
-    password:str
+    email: str
+    password: str
+
 
 class Movie(BaseModel):
     id: Optional[int] = None
@@ -74,24 +83,36 @@ movies = [
 def message():
     return HTMLResponse("<h1>Hello World</h1>")
 
-@app.post('/login', tags=['auth'])
-def login(user:User):
-    if user.email == 'admin@gmail.com' and user.password == 'admin':
-        token: str =create_token(user.model_dump())
+
+@app.post("/login", tags=["auth"])
+def login(user: User):
+    if user.email == "admin@gmail.com" and user.password == "admin":
+        token: str = create_token(user.model_dump())
         return JSONResponse(status_code=200, content=token)
 
 
-@app.get("/movies", tags=["movies"], response_model=List[Movie], status_code=200, dependencies=[Depends(JWTBearer())])
+@app.get(
+    "/movies",
+    tags=["movies"],
+    response_model=List[Movie],
+    status_code=200,
+    dependencies=[Depends(JWTBearer())],
+)
 def get_movies() -> List[Movie]:
-    return JSONResponse(status_code=200, content=movies)
+    db = Session()
+    result = db.query(MovieModel).all()
+
+    return JSONResponse(status_code=200, content=jsonable_encoder(result))
 
 
 @app.get("/movies/{id}", tags=["movies"], response_model=Movie, status_code=200)
 def get_movies(id: int = Path(ge=1, le=2000)) -> Movie:
-    for item in movies:
-        if item["id"] == id:
-            return JSONResponse(status_code=200, content=item)
-    return JSONResponse(status_code=404, content=[])
+    db = Session()
+    result = db.query(MovieModel).filter(MovieModel.id == id).first()
+    if not result:
+        return JSONResponse(status_code=404, content={"message": "No encontrado"})
+
+    return JSONResponse(status_code=200, content=jsonable_encoder(result))
 
 
 @app.get("/movies/", tags=["movies"], response_model=List[Movie], status_code=200)
@@ -104,7 +125,10 @@ def get_movies_by_category(
 
 @app.post("/movies/", tags=["movies"], response_model=dict, status_code=201)
 def create_movies(movie: Movie) -> dict:
-    movies.append(movie)
+    db = Session()
+    new_movie = MovieModel(**movie.model_dump())
+    db.add(new_movie)
+    db.commit()
     return JSONResponse(
         status_code=201, content={"message": "Se ha registrado la pelicula"}
     )
@@ -132,6 +156,3 @@ def delete_movies(id: int) -> dict:
         return JSONResponse(
             status_code=200, content={"message": "Se ha eliminado la pelicula"}
         )
-    return JSONResponse(
-        status_code=404, content={"message": "No se encontro ningun registro"}
-    )
